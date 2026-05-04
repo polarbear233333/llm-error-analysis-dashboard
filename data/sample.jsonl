@@ -1,0 +1,2 @@
+{"id":"demo-1","correct":false,"model_data":{"messages":[{"role":"user","content":"Fix a Django URL reverse bug when optional argument is None."},{"role":"assistant","content":"I only test normal id input and ignore None fallback, so the patch is incomplete."}]}}
+{"id":"demo-2","correct":true,"model_data":{"messages":[{"role":"user","content":"Check whether the reasoning is consistent."},{"role":"assistant","content":"The reasoning stays consistent and the final answer follows from previous steps."}]}}
