@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Error Analysis Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --text:#172033; --muted:#667085; --line:#e6e8ef; --brand:#4f46e5; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .container { max-width: 1320px; margin:0 auto; padding: 28px 18px 48px; }
+    .hero { background:linear-gradient(135deg,#111827,#4338ca); color:white; border-radius:24px; padding:28px; box-shadow:0 20px 50px rgba(79,70,229,.22); margin-bottom:18px; }
+    .hero h1 { margin:0 0 8px; font-size:30px; letter-spacing:-.02em; }
+    .hero p { margin:0; color:#e5e7eb; line-height:1.7; }
+    .grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:14px; margin:16px 0; }
+    .metric { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:16px; padding:14px; }
+    .metric .num { font-size:24px; font-weight:800; }
+    .metric .label { font-size:12px; color:#d1d5db; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; margin-bottom:16px; box-shadow:0 10px 30px rgba(16,24,40,.04); }
+    .controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+    input[type="file"], input[type="text"], select { padding:9px 11px; border-radius:10px; border:1px solid #d0d5dd; background:white; font-size:14px; }
+    input[type="text"] { min-width:260px; }
+    button { border:0; border-radius:10px; padding:10px 14px; background:var(--brand); color:white; cursor:pointer; font-size:14px; font-weight:600; }
+    button.secondary { background:#111827; }
+    button.ghost { background:#eef2ff; color:#3730a3; }
+    button:disabled { background:#c7c7d1; cursor:not-allowed; }
+    .status { color:var(--muted); font-size:13px; }
+    .charts { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    .chart-card { min-height:320px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { border-bottom:1px solid #edf0f5; padding:10px; text-align:left; vertical-align:top; }
+    th { background:#f9fafb; color:#475467; font-weight:700; position:sticky; top:0; }
+    .table-wrap { max-height:620px; overflow:auto; border:1px solid var(--line); border-radius:14px; }
+    .tag { display:inline-flex; border-radius:999px; padding:3px 8px; font-size:12px; font-weight:700; }
+    .tag-A { background:#fee2e2; color:#991b1b; } .tag-B { background:#dbeafe; color:#1e3a8a; }
+    .tag-C { background:#dcfce7; color:#166534; } .tag-None { background:#e5e7eb; color:#374151; }
+    .tag-Inconsistency { background:#fef3c7; color:#92400e; } .tag-Error { background:#fce7f3; color:#9d174d; }
+    .summary,.reason { white-space:pre-wrap; line-height:1.55; }
+    .reason { color:#4b5563; }
+    #progressContainer { display:none; height:8px; background:#e5e7eb; overflow:hidden; border-radius:999px; margin-top:12px; }
+    #progressBar { height:100%; width:0%; background:var(--brand); transition: width .2s ease; }
+    .taxonomy { background:#f8fafc; border:1px dashed #cbd5e1; padding:14px; border-radius:14px; line-height:1.7; color:#344054; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(15,23,42,.55); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+    .modal-content { background:white; border-radius:18px; width:min(980px,100%); max-height:84vh; overflow:auto; padding:18px; box-shadow:0 30px 80px rgba(0,0,0,.25); }
+    .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .modal-title { font-size:18px; font-weight:800; }
+    .modal-close { background:#f2f4f7; color:#111827; }
+    .timeline { border-left:2px solid #d0d5dd; margin-left:12px; padding-left:16px; }
+    .timeline-item { margin-bottom:14px; }
+    .timeline-role { font-weight:800; color:#344054; margin-bottom:4px; }
+    .timeline-content { background:#f9fafb; border:1px solid #edf0f5; border-radius:12px; padding:10px; color:#475467; white-space:pre-wrap; font-size:12px; line-height:1.55; }
+    @media (max-width: 900px) { .grid,.charts { grid-template-columns:1fr; } input[type="text"]{width:100%;} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>LLM Error Analysis Dashboard</h1>
+      <p>上传推理轨迹 JSONL，自动完成错误归因、一致性检测、统计可视化与 case timeline 回放。</p>
+      <div class="grid">
+        <div class="metric"><div class="num" id="mTotal">0</div><div class="label">Total Cases</div></div>
+        <div class="metric"><div class="num" id="mFailed">0</div><div class="label">Failure / Issue</div></div>
+        <div class="metric"><div class="num" id="mDominant">-</div><div class="label">Dominant Type</div></div>
+        <div class="metric"><div class="num" id="mRate">0%</div><div class="label">Visible Ratio</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <input type="file" id="fileInput" accept=".jsonl,.txt" />
+        <button id="sampleBtn" class="ghost">载入示例</button>
+        <button id="analyzeBtn" disabled>开始分析</button>
+        <input id="backendUrl" type="text" value="http://127.0.0.1:8000" />
+        <button id="healthBtn" class="secondary">检查后端</button>
+        <span id="info" class="status">请选择 JSONL 文件。</span>
+      </div>
+      <div id="progressContainer"><div id="progressBar"></div></div>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <label>类别过滤：
+          <select id="categoryFilter">
+            <option value="">全部</option><option value="A">A 类</option><option value="B">B 类</option><option value="C">C 类</option>
+            <option value="None">None（无错误）</option><option value="Inconsistency">Inconsistency（推理矛盾）</option><option value="Error">Error（分析失败）</option>
+          </select>
+        </label>
+        <input type="text" id="keywordFilter" placeholder="搜索 id / 摘要 / 原因" />
+        <button id="downloadAllBtn" disabled>下载全部 CSV</button>
+        <button id="downloadFilteredBtn" disabled>下载当前 CSV</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>错误类型体系</h2>
+      <div class="taxonomy">
+        <b>A 认知与理解偏差：</b>A1 范围界定错误，A2 隐性约束忽视，A3 任务完成度不足。<br/>
+        <b>B 逻辑与实现缺陷：</b>B1 边界条件处理不当，B2 副作用引入，B3 错误因果归因。<br/>
+        <b>C 验证与测试失效：</b>C1 虚假成功，C2 测试覆盖不足。<br/>
+        <b>None / Inconsistency：</b>正确轨迹无明显错误，或正确轨迹中发现推理矛盾。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>统计可视化</h2>
+      <div class="charts">
+        <div class="chart-card"><h3>大类占比</h3><canvas id="categoryChart"></canvas></div>
+        <div class="chart-card"><h3>细分类数量</h3><canvas id="subCategoryChart"></canvas></div>
+      </div>
+      <h3>数量 & 占比</h3>
+      <div class="table-wrap"><table id="statsTable"><thead><tr><th>类型</th><th>数量</th><th>占比</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Case 分析结果</h2>
+      <div class="table-wrap">
+        <table id="resultTable">
+          <thead><tr><th style="width:70px">ID</th><th style="width:110px">类别</th><th>摘要</th><th>原因</th><th style="width:100px">操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div id="timelineModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header"><div class="modal-title">推理轨迹 Timeline</div><button class="modal-close" id="timelineClose">×</button></div>
+      <div id="timelineBody"></div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fileInput=$('fileInput'), analyzeBtn=$('analyzeBtn'), info=$('info'), categoryFilter=$('categoryFilter'), keywordFilter=$('keywordFilter');
+const downloadAllBtn=$('downloadAllBtn'), downloadFilteredBtn=$('downloadFilteredBtn'), progressContainer=$('progressContainer'), progressBar=$('progressBar');
+const resultTableBody=document.querySelector('#resultTable tbody'), timelineModal=$('timelineModal'), timelineBody=$('timelineBody'), timelineClose=$('timelineClose');
+let rawItems=[], analysisResults=[], categoryChart=null, subCategoryChart=null;
+const sampleItems=[
+  {id:'demo-1', correct:false, model_data:{messages:[{role:'user',content:'Fix a URL reverse bug when optional argument is None.'},{role:'assistant',content:'Only tested normal id input, did not consider None fallback.'}]}},
+  {id:'demo-2', correct:true, model_data:{messages:[{role:'user',content:'Explain why patch works.'},{role:'assistant',content:'The reasoning is consistent and the final conclusion follows.'}]}}
+];
+function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function startProgress(){progressContainer.style.display='block';progressBar.style.width='0%';let p=0;const t=setInterval(()=>{if(p>=90){clearInterval(t);return;}p+=2;progressBar.style.width=p+'%';},160);return t;}
+function finishProgress(t){clearInterval(t);progressBar.style.width='100%';setTimeout(()=>progressContainer.style.display='none',450);}
+function parseJsonl(text){return text.split(/\r?\n/).filter(x=>x.trim()).map((line,i)=>{try{return JSON.parse(line);}catch(e){throw new Error(`第 ${i+1} 行不是合法 JSON：${e.message}`)}});}
+fileInput.addEventListener('change',()=>{const f=fileInput.files[0]; if(!f)return; const r=new FileReader(); info.textContent='读取中…'; r.onload=e=>{try{rawItems=parseJsonl(e.target.result); info.textContent=`读取完成，共 ${rawItems.length} 条。`; analyzeBtn.disabled=rawItems.length===0;}catch(err){info.textContent=err.message; analyzeBtn.disabled=true;}}; r.readAsText(f,'utf-8');});
+$('sampleBtn').addEventListener('click',()=>{rawItems=sampleItems; info.textContent='已载入 2 条示例。'; analyzeBtn.disabled=false;});
+$('healthBtn').addEventListener('click',async()=>{try{const resp=await fetch($('backendUrl').value.replace(/\/$/,'')+'/health'); const data=await resp.json(); info.textContent=`后端正常：${data.app}，模型 ${data.model}，API Key：${data.has_api_key?'已配置':'未配置'}`;}catch(e){info.textContent='后端检查失败：'+e;}});
+analyzeBtn.addEventListener('click',async()=>{const timer=startProgress(); analyzeBtn.disabled=true; try{info.textContent='分析中…'; const resp=await fetch($('backendUrl').value.replace(/\/$/,'')+'/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:rawItems})}); if(!resp.ok) throw new Error(await resp.text()); const data=await resp.json(); analysisResults=data.results.map((r,idx)=>({...r,_idx:idx})); downloadAllBtn.disabled=false; downloadFilteredBtn.disabled=false; renderAll(); info.textContent=`分析完成：共 ${analysisResults.length} 条。`;}catch(e){info.textContent='后端调用失败：'+e;}finally{analyzeBtn.disabled=false; finishProgress(timer);}});
+categoryFilter.addEventListener('change',renderAll); keywordFilter.addEventListener('input',renderAll);
+function mainCat(cat){if(!cat)return'None'; if(['None','Inconsistency','Error'].includes(cat))return cat; return cat.charAt(0);} 
+function getFiltered(){const c=categoryFilter.value, kw=keywordFilter.value.trim().toLowerCase(); return analysisResults.filter(r=>{const cat=r.category||''; const okCat=!c || (c==='None'?cat==='None':c==='Inconsistency'?cat==='Inconsistency':c==='Error'?cat==='Error':cat.startsWith(c)); const text=`${r.id} ${r.category} ${r.summary} ${r.reason}`.toLowerCase(); return okCat && (!kw || text.includes(kw));});}
+function renderAll(){const rows=getFiltered(); renderMetrics(rows); renderTable(rows); renderCharts(rows); renderStats(rows);}
+function renderMetrics(rows){$('mTotal').textContent=analysisResults.length; $('mFailed').textContent=analysisResults.filter(r=>!['None'].includes(r.category)).length; const count={}; rows.forEach(r=>{const m=mainCat(r.category); count[m]=(count[m]||0)+1;}); const dom=Object.entries(count).sort((a,b)=>b[1]-a[1])[0]; $('mDominant').textContent=dom?dom[0]:'-'; $('mRate').textContent=analysisResults.length?((rows.length/analysisResults.length)*100).toFixed(1)+'%':'0%';}
+function renderTable(rows){resultTableBody.innerHTML=''; rows.forEach(r=>{const tr=document.createElement('tr'); const tag=mainCat(r.category); tr.innerHTML=`<td>${escapeHtml(r.id)}</td><td><span class="tag tag-${tag}">${escapeHtml(r.category)}</span></td><td class="summary">${escapeHtml(r.summary)}</td><td class="reason">${escapeHtml(r.reason)}</td><td><button class="ghost" onclick="openTimeline(${r._idx})">查看</button></td>`; resultTableBody.appendChild(tr);});}
+function renderCharts(rows){const catCount={}, subCount={}; rows.forEach(r=>{const cat=r.category||''; const m=mainCat(cat); catCount[m]=(catCount[m]||0)+1; if(/^[ABC]\d/.test(cat)) subCount[cat]=(subCount[cat]||0)+1;}); if(categoryChart)categoryChart.destroy(); categoryChart=new Chart($('categoryChart'),{type:'doughnut',data:{labels:Object.keys(catCount),datasets:[{data:Object.values(catCount)}]}}); if(subCategoryChart)subCategoryChart.destroy(); subCategoryChart=new Chart($('subCategoryChart'),{type:'bar',data:{labels:Object.keys(subCount),datasets:[{label:'count',data:Object.values(subCount)}]},options:{scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});}
+function renderStats(rows){const tb=document.querySelector('#statsTable tbody'); tb.innerHTML=''; const count={}; rows.forEach(r=>{const m=mainCat(r.category); count[m]=(count[m]||0)+1;}); ['A','B','C','None','Inconsistency','Error'].forEach(t=>{const n=count[t]||0,p=rows.length?((n/rows.length)*100).toFixed(2)+'%':'0.00%'; tb.innerHTML+=`<tr><td>${t}</td><td>${n}</td><td>${p}</td></tr>`;});}
+function csvEscape(v){const s=String(v??''); return '"'+s.replace(/"/g,'""')+'"';}
+function download(rows,name){let csv='id,category,category_name,summary,reason\n'; rows.forEach(r=>{csv += [r.id,r.category,r.category_name,r.summary,r.reason].map(csvEscape).join(',')+'\n';}); const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url);}
+downloadAllBtn.addEventListener('click',()=>download(analysisResults,'all_results.csv'));
+downloadFilteredBtn.addEventListener('click',()=>download(getFiltered(),'filtered_results.csv'));
+function getSteps(item){if(item?.model_data?.fncall_messages) return item.model_data.fncall_messages; if(item?.model_data?.messages) return item.model_data.messages; return [{role:'raw-json', content:JSON.stringify(item,null,2)}];}
+window.openTimeline=function(idx){const item=rawItems[idx]; const steps=getSteps(item); const wrap=document.createElement('div'); wrap.className='timeline'; steps.forEach((m,i)=>{const content=typeof m.content==='string'?m.content:JSON.stringify(m.content,null,2); const div=document.createElement('div'); div.className='timeline-item'; div.innerHTML=`<div class="timeline-role">${i+1}. [${escapeHtml(m.role||'unknown')}]</div><div class="timeline-content">${escapeHtml(content.slice(0,1200))}</div>`; wrap.appendChild(div);}); timelineBody.innerHTML=''; timelineBody.appendChild(wrap); timelineModal.style.display='flex';}
+timelineClose.addEventListener('click',()=>timelineModal.style.display='none'); timelineModal.addEventListener('click',e=>{if(e.target===timelineModal)timelineModal.style.display='none';});
+</script>
+</body>
+</html>
