@@ -130,19 +130,4 @@ http://127.0.0.1:8000
 - `None`：未发现明显推理错误
 - `Inconsistency`：正确轨迹中存在推理矛盾
 
-## 简历描述建议
 
-**LLM Error Analysis & Visualization Platform｜大模型推理错误分析系统**
-
-- 构建端到端 LLM 推理错误分析平台，支持从 JSONL 推理轨迹到自动错误归因、统计可视化与 case 回放的完整 pipeline。
-- 设计 A/B/C 细粒度错误分类体系，覆盖认知理解、逻辑实现与验证测试三类失败模式，提升 benchmark 结果的可解释性。
-- 基于 LLM-as-Judge 与结构化 JSON 输出，实现错误原因自动总结、类别归因与正确轨迹一致性检查。
-- 开发 FastAPI + Web Dashboard，支持错误分布图表、类别筛选、关键词检索、timeline 浏览与 CSV 导出。
-
-## 后续可扩展方向
-
-- 多模型错误模式对比
-- 自动 rubric scoring
-- error pattern clustering
-- React 前端重构
-- 与 SWE-bench / OpenHands 轨迹数据自动对接
